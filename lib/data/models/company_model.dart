@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class CompanyModel {
   final String companyName;
   final String ctc;
@@ -8,7 +10,7 @@ class CompanyModel {
   final String deadline;
   final String links;
   final String location;
-  final List<dynamic> eventTimeline;
+  final Map<String, dynamic> eventTimeline;
   final bool selected;
   final List<String> selectedReg;
   final String receivedAt;
@@ -38,9 +40,30 @@ class CompanyModel {
     }
 
     final rawTimeline = json['event_timeline'] ?? json['eventTimeline'];
-    List<dynamic> parsedTimeline = [];
-    if (rawTimeline is List) {
-      parsedTimeline = rawTimeline;
+    Map<String, dynamic> parsedTimeline = {};
+    if (rawTimeline is Map) {
+      parsedTimeline = Map<String, dynamic>.from(rawTimeline);
+    } else if (rawTimeline is List && rawTimeline.isNotEmpty) {
+      for (var item in rawTimeline) {
+        if (item is Map) {
+          parsedTimeline.addAll(Map<String, dynamic>.from(item));
+        }
+      }
+    } else if (rawTimeline is String && rawTimeline.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawTimeline);
+        if (decoded is Map) {
+          parsedTimeline = Map<String, dynamic>.from(decoded);
+        } else if (decoded is List) {
+          for (var item in decoded) {
+            if (item is Map) {
+              parsedTimeline.addAll(Map<String, dynamic>.from(item));
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore parsing error
+      }
     }
 
     return CompanyModel(

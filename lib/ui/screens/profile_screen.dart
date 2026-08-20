@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../data/models/student_model.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../utils/network_util.dart';
 import '../../services/auth_service.dart';
+import '../../services/update_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/linkified_text.dart';
 
 class ProfileScreen extends StatefulWidget {
   final StudentModel? student;
@@ -26,18 +31,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     final regController = TextEditingController(text: widget.student!.regNo);
     final neopatController = TextEditingController(text: widget.student!.neopatId);
-    final c10Controller = TextEditingController(text: widget.student!.class10Perc.toString());
-    final c12Controller = TextEditingController(text: widget.student!.class12Perc.toString());
-    final cgpaController = TextEditingController(text: widget.student!.ugCgpa.toString());
-
-    int arrears = widget.student!.arrears;
-    String degree = widget.student!.degree;
+    String errorMessage = '';
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
+        bool isSaving = false;
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Container(
@@ -67,11 +68,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      'Edit Academic Profile',
-                      style: Theme.of(context).textTheme.titleLarge,
+                    const Text(
+                      'Update Profile Details',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 16),
+                    if (errorMessage.isNotEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(LucideIcons.alertCircle, color: Colors.redAccent, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                errorMessage,
+                                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     TextFormField(
                       controller: regController,
                       decoration: const InputDecoration(
@@ -88,89 +111,58 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: c10Controller,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(labelText: '10th %'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: TextFormField(
-                            controller: c12Controller,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(labelText: '12th %'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: TextFormField(
-                            controller: cgpaController,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(labelText: 'UG CGPA'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: degree,
-                            decoration: const InputDecoration(labelText: 'Degree'),
-                            dropdownColor: AppTheme.surface,
-                            items: ['B.Tech', 'M.Tech'].map((d) {
-                              return DropdownMenuItem(value: d, child: Text(d));
-                            }).toList(),
-                            onChanged: (val) {
-                              if (val != null) setModalState(() => degree = val);
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: DropdownButtonFormField<int>(
-                            value: arrears,
-                            decoration: const InputDecoration(labelText: 'Arrears'),
-                            dropdownColor: AppTheme.surface,
-                            items: [0, 1, 2, 3, 4, 5].map((a) {
-                              return DropdownMenuItem(
-                                value: a,
-                                child: Text(a == 0 ? '0 Arrears' : '$a Standing'),
-                              );
-                            }).toList(),
-                            onChanged: (val) {
-                              if (val != null) setModalState(() => arrears = val);
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
                       height: 48,
                       child: ElevatedButton(
-                        onPressed: () async {
-                          final updated = widget.student!.copyWith(
-                            regNo: regController.text.toUpperCase().trim(),
-                            neopatId: neopatController.text.toUpperCase().trim(),
-                            class10Perc: double.tryParse(c10Controller.text) ?? widget.student!.class10Perc,
-                            class12Perc: double.tryParse(c12Controller.text) ?? widget.student!.class12Perc,
-                            ugCgpa: double.tryParse(cgpaController.text) ?? widget.student!.ugCgpa,
-                            arrears: arrears,
-                            degree: degree,
-                          );
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                final hasInternet = await NetworkUtil.hasInternet();
+                                if (!hasInternet && !widget.student!.isAnonymous) {
+                                  if (context.mounted) NetworkUtil.showNoInternetDialog(context);
+                                  return;
+                                }
 
-                          await AuthService.updateStudentProfile(updated);
-                          widget.onProfileUpdated(updated);
-                          if (ctx.mounted) Navigator.pop(ctx);
-                        },
-                        child: const Text('Save Profile Changes'),
+                                final newReg = regController.text.toUpperCase().trim();
+                                final newNeopat = neopatController.text.toUpperCase().trim();
+
+                                if (!AuthService.validateRegNo(newReg)) {
+                                  setModalState(() {
+                                    errorMessage = 'Invalid Registration Number format. Expected pattern like 23BAI1506.';
+                                  });
+                                  return;
+                                }
+
+                                if (!AuthService.validateNeopatId(newNeopat)) {
+                                  setModalState(() {
+                                    errorMessage = 'Invalid NeoPat ID format. Expected pattern like A1B2C3D4.';
+                                  });
+                                  return;
+                                }
+
+                                setModalState(() => isSaving = true);
+
+                                final updated = widget.student!.copyWith(
+                                  regNo: newReg,
+                                  neopatId: newNeopat,
+                                );
+
+                                await AuthService.updateStudentProfile(updated);
+                                
+                                if (context.mounted) {
+                                  Navigator.pop(context); // Pop the modal first
+                                }
+                                widget.onProfileUpdated(updated); // Update parent state after modal is gone
+                              },
+                        child: isSaving
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Text('Save Profile Changes'),
                       ),
                     ),
                   ],
@@ -181,6 +173,237 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       },
     );
+  }
+
+  void _showChangePasswordSheet() {
+    final oldPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    String errorMessage = '';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        bool isSaving = false;
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: AppTheme.background,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: EdgeInsets.only(
+                top: 20,
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceLight,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Change Password',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 16),
+                    if (errorMessage.isNotEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(LucideIcons.alertCircle, color: Colors.redAccent, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                errorMessage,
+                                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    TextFormField(
+                      controller: oldPasswordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Old Password',
+                        prefixIcon: Icon(LucideIcons.lock, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: newPasswordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'New Password',
+                        prefixIcon: Icon(LucideIcons.lock, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: confirmPasswordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Confirm New Password',
+                        prefixIcon: Icon(LucideIcons.lock, color: AppTheme.textSecondary),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                final hasInternet = await NetworkUtil.hasInternet();
+                                if (!hasInternet) {
+                                  if (context.mounted) NetworkUtil.showNoInternetDialog(context);
+                                  return;
+                                }
+
+                                final oldPass = oldPasswordController.text;
+                                final newPass = newPasswordController.text;
+                                final confirmPass = confirmPasswordController.text;
+
+                                if (oldPass.isEmpty || newPass.isEmpty) {
+                                  setModalState(() => errorMessage = 'All fields are required.');
+                                  return;
+                                }
+                                if (newPass.length < 6) {
+                                  setModalState(() => errorMessage = 'Password must be at least 6 characters.');
+                                  return;
+                                }
+                                if (newPass != confirmPass) {
+                                  setModalState(() => errorMessage = 'Passwords do not match.');
+                                  return;
+                                }
+
+                                setModalState(() => isSaving = true);
+                                
+                                try {
+                                  final supabase = Supabase.instance.client;
+                                  
+                                  // Verify old password
+                                  await supabase.auth.signInWithPassword(
+                                    email: widget.student!.email,
+                                    password: oldPass,
+                                  );
+
+                                  // Update to new password
+                                  await supabase.auth.updateUser(
+                                    UserAttributes(password: newPass),
+                                  );
+
+                                  if (context.mounted) {
+                                    Navigator.pop(context); // Close bottom sheet
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Password updated successfully!')),
+                                    );
+                                  }
+                                } on AuthException catch (e) {
+                                  setModalState(() {
+                                    isSaving = false;
+                                    if (e.message.contains('Invalid login credentials')) {
+                                      errorMessage = 'Incorrect old password.';
+                                    } else {
+                                      errorMessage = e.message;
+                                    }
+                                  });
+                                } catch (e) {
+                                  setModalState(() {
+                                    isSaving = false;
+                                    errorMessage = 'An error occurred. Please try again.';
+                                  });
+                                }
+                              },
+                        child: isSaving
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Text('Change Password'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteAccount() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Delete Account', style: TextStyle(color: AppTheme.error)),
+        content: const Text(
+          'Are you sure you want to delete your account? This will remove your local data and clear your profile details. This action cannot be undone.',
+          style: TextStyle(color: AppTheme.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final hasInternet = await NetworkUtil.hasInternet();
+    if (!hasInternet) {
+      if (mounted) {
+        NetworkUtil.showNoInternetDialog(context);
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: AppTheme.error)),
+    );
+
+    await AuthService.deleteAccount();
+
+    if (mounted) {
+      Navigator.pop(context); // close loader
+      widget.onSignOut();
+    }
   }
 
   @override
@@ -195,7 +418,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         actions: [
           IconButton(
             icon: const Icon(LucideIcons.edit, color: AppTheme.primary),
-            onPressed: _showEditSheet,
+            onPressed: () async {
+              final hasInternet = await NetworkUtil.hasInternet();
+              if (!hasInternet) {
+                if (context.mounted) {
+                  NetworkUtil.showNoInternetDialog(context);
+                }
+                return;
+              }
+              _showEditSheet();
+            },
           ),
         ],
       ),
@@ -218,7 +450,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
-                          color: AppTheme.primary.withOpacity(0.3),
+                          color: AppTheme.primary.withValues(alpha: 0.3),
                           blurRadius: 16,
                           offset: const Offset(0, 8),
                         )
@@ -233,7 +465,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          student.email,
+                          student.isAnonymous ? 'Anonymous User' : student.email,
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 16,
@@ -242,7 +474,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${student.degree} Candidate • Reg No: ${student.regNo.isNotEmpty ? student.regNo : "Not Set"}',
+                          'Reg No: ${student.regNo.isNotEmpty ? student.regNo : "Not Set"}',
                           style: const TextStyle(color: Colors.white70, fontSize: 13),
                         ),
                       ],
@@ -251,11 +483,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 20),
 
                   // Profile Details List
-                  _profileItem(
-                    icon: LucideIcons.mail,
-                    title: 'VIT Email Address',
-                    value: student.email,
-                  ),
+                  if (!student.isAnonymous)
+                    _profileItem(
+                      icon: LucideIcons.mail,
+                      title: 'VIT Email Address',
+                      value: student.email,
+                    ),
                   _profileItem(
                     icon: LucideIcons.contact,
                     title: 'Registration Number',
@@ -266,20 +499,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     title: 'NeoPat ID',
                     value: student.neopatId.isNotEmpty ? student.neopatId : 'Not Onboarded',
                   ),
-                  const SizedBox(height: 14),
+                  _profileItem(
+                    icon: LucideIcons.globe,
+                    title: 'Official Website',
+                    value: 'https://cdcbasevit.duckdns.org',
+                  ),
                   const SizedBox(height: 24),
 
-                  // Edit Profile Button
+                  if (!student.isAnonymous) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _showChangePasswordSheet,
+                        icon: const Icon(LucideIcons.lock, size: 18),
+                        label: const Text('Change Password'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.surface,
+                          foregroundColor: AppTheme.primary,
+                          side: const BorderSide(color: AppTheme.primary),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  
+                  // Check for Update Button
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _showEditSheet,
-                      icon: const Icon(LucideIcons.edit3, size: 18),
-                      label: const Text('Update Academic Information'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: const BorderSide(color: AppTheme.primary),
+                    child: ElevatedButton.icon(
+                      onPressed: () => UpdateService.checkForUpdates(context, showNoUpdate: true),
+                      icon: const Icon(LucideIcons.refreshCw, size: 18),
+                      label: const Text('Check for Update'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.surface,
                         foregroundColor: AppTheme.primary,
+                        side: const BorderSide(color: AppTheme.primary),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
                   ),
@@ -291,15 +549,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: ElevatedButton.icon(
                       onPressed: widget.onSignOut,
                       icon: const Icon(LucideIcons.logOut, size: 18),
-                      label: const Text('Sign Out of Portal'),
+                      label: const Text('Sign Out'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red.withOpacity(0.2),
-                        foregroundColor: Colors.redAccent,
+                        backgroundColor: AppTheme.surface,
+                        foregroundColor: AppTheme.primary,
+                        side: const BorderSide(color: AppTheme.primary),
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  
+                  // Delete Account Button
+                  if (!student.isAnonymous)
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton.icon(
+                        onPressed: _deleteAccount,
+                        icon: const Icon(LucideIcons.trash2, size: 18, color: AppTheme.error),
+                        label: const Text('Delete Account', style: TextStyle(color: AppTheme.error)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -332,13 +607,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  value,
+                LinkifiedText(
+                  text: value,
                   style: const TextStyle(
                     color: AppTheme.textPrimary,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ),
+                  linkStyle: const TextStyle(
+                    color: AppTheme.primary,
+                    decoration: TextDecoration.underline,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  onLinkTap: (url) async {
+                    final uri = Uri.parse(url.startsWith('http') ? url : 'https://$url');
+                    try {
+                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                    } catch (e) {
+                      debugPrint('Could not launch $url: $e');
+                    }
+                  },
                 ),
               ],
             ),

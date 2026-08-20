@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../data/models/student_model.dart';
+import '../utils/network_util.dart';
 
 class AuthService {
   static const String _sessionKey = 'cdc_student_session';
@@ -18,28 +20,44 @@ class AuthService {
 
   static bool validateNeopatId(String neopatId) {
     final clean = neopatId.trim().toUpperCase();
-    final regex = RegExp(r'^[A-Z0-9]{8}$');
+    final regex = RegExp(r'^([A-Z][0-9]){4}$');
     return regex.hasMatch(clean);
   }
 
   static Future<StudentModel?> getCurrentStudent() async {
     try {
+
       final supabase = Supabase.instance.client;
+      
+      // Check network first so we don't delay startup if offline
+      final hasInternet = await NetworkUtil.hasInternet();
+      if (hasInternet) {
+        try {
+          // This verifies the session with the server. If the user was deleted
+          // from the backend, this will throw an AuthException.
+          await supabase.auth.getUser();
+        } on AuthException catch (e) {
+          // Only force sign out if we get a definitive "User not found" error.
+          // Other AuthExceptions (like temporary token expiration delays) shouldn't log the user out.
+          if (e.message.toLowerCase().contains('user not found')) {
+            await signOut();
+            return null;
+          }
+        } catch (_) {}
+      }
+
       final user = supabase.auth.currentUser;
 
       if (user != null) {
         final regNo = user.userMetadata?['reg_no'] ?? '';
         final neopatId = user.userMetadata?['neopat_id'] ?? '';
+        final isAnonymousUser = user.isAnonymous;
         final student = StudentModel(
           id: user.id,
           email: user.email ?? '',
           regNo: regNo,
           neopatId: neopatId,
-          class10Perc: 0.0,
-          class12Perc: 0.0,
-          ugCgpa: 0.0,
-          arrears: 0,
-          degree: 'B.Tech',
+          isAnonymous: isAnonymousUser,
         );
         await saveLocalStudent(student);
         return student;
@@ -49,25 +67,7 @@ class AuthService {
     }
 
     final local = await getLocalStudent();
-    if (local != null) return local;
-
-    final prefs = await SharedPreferences.getInstance();
-    final explicitSignOut = prefs.getBool('explicit_sign_out') ?? false;
-    if (explicitSignOut) return null;
-
-    final defaultStudent = StudentModel(
-      id: 'd551d34d-6026-434f-a73c-43944dda3e78',
-      email: 'gudikandula.sai2023@vitstudent.ac.in',
-      regNo: '23BAI1536',
-      neopatId: 'D4P1V0G2',
-      class10Perc: 90.0,
-      class12Perc: 92.0,
-      ugCgpa: 8.5,
-      arrears: 0,
-      degree: 'B.Tech',
-    );
-    await saveLocalStudent(defaultStudent);
-    return defaultStudent;
+    return local;
   }
 
   static Future<void> saveLocalStudent(StudentModel student) async {
@@ -113,11 +113,7 @@ class AuthService {
         email: user.email ?? '',
         regNo: regNo,
         neopatId: neopatId,
-        class10Perc: 0.0,
-        class12Perc: 0.0,
-        ugCgpa: 0.0,
-        arrears: 0,
-        degree: 'B.Tech',
+
       );
       await saveLocalStudent(student);
       return student;
@@ -126,16 +122,58 @@ class AuthService {
     }
   }
 
+  static Future<StudentModel> signInAnonymously({
+    required String regNo,
+    required String neopatId,
+  }) async {
+    final cleanRegNo = regNo.trim().toUpperCase();
+    final cleanNeopatId = neopatId.trim().toUpperCase();
+
+    if (!validateRegNo(cleanRegNo)) {
+      throw Exception('Invalid Registration Number format. Expected pattern like 23BAI1506.');
+    }
+
+    if (!validateNeopatId(cleanNeopatId)) {
+      throw Exception('Invalid NeoPat ID format. Expected pattern like A1B2C3D4.');
+    }
+
+    final supabase = Supabase.instance.client;
+    final authResponse = await supabase.auth.signInAnonymously();
+    final user = authResponse.user;
+
+    if (user != null) {
+      // Store their reg no and neopat id in their Supabase anonymous profile metadata
+      try {
+        await supabase.auth.updateUser(
+          UserAttributes(
+            data: {
+              'reg_no': cleanRegNo,
+              'neopat_id': cleanNeopatId,
+            },
+          ),
+        );
+      } catch (e) {
+        debugPrint('Failed to update anonymous user metadata: $e');
+      }
+    }
+
+    final student = StudentModel(
+      id: user?.id ?? 'anonymous',
+      email: '',
+      regNo: cleanRegNo,
+      neopatId: cleanNeopatId,
+      isAnonymous: true,
+    );
+
+    await saveLocalStudent(student);
+    return student;
+  }
+
   static Future<StudentModel> signUp({
     required String email,
     required String password,
     required String regNo,
     required String neopatId,
-    required double class10Perc,
-    required double class12Perc,
-    required double ugCgpa,
-    required int arrears,
-    required String degree,
   }) async {
     final cleanEmail = email.trim().toLowerCase();
     final cleanRegNo = regNo.trim().toUpperCase();
@@ -150,7 +188,7 @@ class AuthService {
     }
 
     if (!validateNeopatId(cleanNeopatId)) {
-      throw Exception('Invalid NeoPat ID format. Expected pattern like X1B2C3D4.');
+      throw Exception('Invalid NeoPat ID format. Expected pattern like A1B2C3.');
     }
 
     final supabase = Supabase.instance.client;
@@ -170,11 +208,6 @@ class AuthService {
         email: cleanEmail,
         regNo: cleanRegNo,
         neopatId: cleanNeopatId,
-        class10Perc: class10Perc,
-        class12Perc: class12Perc,
-        ugCgpa: ugCgpa,
-        arrears: arrears,
-        degree: degree,
       );
 
       await saveLocalStudent(student);
@@ -204,6 +237,48 @@ class AuthService {
   static Future<void> signOut() async {
     try {
       final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+      
+      if (user != null && user.isAnonymous) {
+        try {
+          await supabase.rpc('delete_user');
+        } catch (_) {}
+      }
+      
+      await supabase.auth.signOut();
+    } catch (_) {}
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_sessionKey);
+    await prefs.setBool('explicit_sign_out', true);
+  }
+
+  static Future<void> deleteAccount() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+      
+      if (user != null) {
+        // Clear user metadata to remove personal details
+        try {
+          await supabase.auth.updateUser(
+            UserAttributes(
+              data: {
+                'reg_no': '',
+                'neopat_id': '',
+              },
+            ),
+          );
+        } catch (_) {}
+        
+        // Call the backend RPC to securely delete the auth user
+        try {
+          await supabase.rpc('delete_user');
+        } catch (e) {
+          throw Exception('Failed to delete user via RPC: $e');
+        }
+      }
+      
       await supabase.auth.signOut();
     } catch (_) {}
 

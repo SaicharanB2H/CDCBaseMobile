@@ -11,6 +11,7 @@ class AppTheme {
   static const Color accent = Color(0xFF38BDF8);
   static const Color success = Color(0xFF10B981);
   static const Color warning = Color(0xFFA855F7);
+  static const Color error = Color(0xFFEF4444);
   static const Color textPrimary = Color(0xFFF8FAFC);
   static const Color textSecondary = Color(0xFF94A3B8);
   static const Color border = Color(0xFF334155);
@@ -23,7 +24,6 @@ class AppTheme {
         primary: primary,
         secondary: accent,
         surface: surface,
-        background: background,
       ),
       textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme).copyWith(
         headlineMedium: GoogleFonts.outfit(

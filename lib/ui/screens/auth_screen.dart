@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/auth_service.dart';
+import '../../utils/network_util.dart';
 import '../theme/app_theme.dart';
 import 'main_navigation.dart';
 
@@ -13,6 +15,7 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   bool isSignUp = false;
+  bool isAnonymousLogin = false;
   bool loading = false;
   String errorMessage = '';
 
@@ -23,12 +26,6 @@ class _AuthScreenState extends State<AuthScreen> {
   final _passwordController = TextEditingController();
   final _regNoController = TextEditingController();
   final _neopatIdController = TextEditingController();
-  final _class10Controller = TextEditingController();
-  final _class12Controller = TextEditingController();
-  final _cgpaController = TextEditingController();
-
-  int arrears = 0;
-  String degree = 'B.Tech';
 
   @override
   void dispose() {
@@ -36,9 +33,6 @@ class _AuthScreenState extends State<AuthScreen> {
     _passwordController.dispose();
     _regNoController.dispose();
     _neopatIdController.dispose();
-    _class10Controller.dispose();
-    _class12Controller.dispose();
-    _cgpaController.dispose();
     super.dispose();
   }
 
@@ -46,6 +40,46 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() {
       errorMessage = '';
     });
+
+    final hasInternet = await NetworkUtil.hasInternet();
+    if (!hasInternet) {
+      if (mounted) NetworkUtil.showNoInternetDialog(context);
+      return;
+    }
+
+    if (isAnonymousLogin) {
+      if (!AuthService.validateRegNo(_regNoController.text)) {
+        setState(() {
+          errorMessage = 'Invalid Registration Number format. Expected pattern like 23BAI1506.';
+        });
+        return;
+      }
+      if (!AuthService.validateNeopatId(_neopatIdController.text)) {
+        setState(() {
+          errorMessage = 'Invalid NeoPat ID format. Expected pattern like A1B2C3D4.';
+        });
+        return;
+      }
+
+      setState(() { loading = true; });
+      try {
+        final student = await AuthService.signInAnonymously(
+          regNo: _regNoController.text,
+          neopatId: _neopatIdController.text,
+        );
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => MainNavigation(initialStudent: student, forceSyncOnInit: true)),
+          );
+        }
+      } catch (e) {
+        setState(() { errorMessage = e.toString(); });
+      } finally {
+        if (mounted) setState(() { loading = false; });
+      }
+      return;
+    }
 
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
@@ -73,7 +107,7 @@ class _AuthScreenState extends State<AuthScreen> {
       }
       if (!AuthService.validateNeopatId(_neopatIdController.text)) {
         setState(() {
-          errorMessage = 'Invalid NeoPat ID format. Expected pattern like X1B2C3D4.';
+          errorMessage = 'Invalid NeoPat ID format. Expected pattern like A1B2C3D4.';
         });
         return;
       }
@@ -90,16 +124,11 @@ class _AuthScreenState extends State<AuthScreen> {
           password: password,
           regNo: _regNoController.text,
           neopatId: _neopatIdController.text,
-          class10Perc: double.tryParse(_class10Controller.text) ?? 0.0,
-          class12Perc: double.tryParse(_class12Controller.text) ?? 0.0,
-          ugCgpa: double.tryParse(_cgpaController.text) ?? 0.0,
-          arrears: arrears,
-          degree: degree,
         );
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (_) => MainNavigation(initialStudent: student)),
+            MaterialPageRoute(builder: (_) => MainNavigation(initialStudent: student, forceSyncOnInit: true)),
           );
         }
       } else {
@@ -110,13 +139,23 @@ class _AuthScreenState extends State<AuthScreen> {
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (_) => MainNavigation(initialStudent: student)),
+            MaterialPageRoute(builder: (_) => MainNavigation(initialStudent: student, forceSyncOnInit: true)),
           );
         }
       }
+    } on AuthException catch (e) {
+      setState(() {
+        if (e.message.contains('Invalid login credentials')) {
+          errorMessage = 'Invalid email or password. Please try again.';
+        } else if (e.message.contains('User already registered')) {
+          errorMessage = 'This email is already registered. Please sign in instead.';
+        } else {
+          errorMessage = e.message;
+        }
+      });
     } catch (e) {
       setState(() {
-        errorMessage = e.toString().replaceAll('Exception: ', '');
+        errorMessage = 'An unexpected error occurred. Please try again later.';
       });
     } finally {
       if (mounted) {
@@ -147,7 +186,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        color: AppTheme.primary.withOpacity(0.3),
+                        color: AppTheme.primary.withValues(alpha: 0.3),
                         blurRadius: 16,
                         offset: const Offset(0, 8),
                       )
@@ -157,17 +196,28 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'MailBase CDC Portal',
+                  'CDC MailBase Portal',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  isSignUp ? 'Create your Student Placement Account' : 'Sign in to access your placement dashboard',
+                  isAnonymousLogin ? 'Continue as Anonymous User' : (isSignUp ? 'Create your Student Placement Account' : 'Sign in to access your placement dashboard'),
                   style: Theme.of(context).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
                 ),
+                if (!isAnonymousLogin) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'User can login using the same credentials from CDCBase website',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppTheme.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
                 const SizedBox(height: 28),
 
                 // Error Message Box
@@ -176,9 +226,9 @@ class _AuthScreenState extends State<AuthScreen> {
                     margin: const EdgeInsets.only(bottom: 20),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.15),
+                      color: Colors.red.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red.withOpacity(0.3)),
+                      border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
                     ),
                     child: Row(
                       children: [
@@ -200,29 +250,31 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Column(
                     children: [
                       // Email
-                      TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                          hintText: 'VIT Email (e.g. name.2023@vitstudent.ac.in)',
-                          prefixIcon: Icon(LucideIcons.mail, color: AppTheme.textSecondary),
+                      if (!isAnonymousLogin) ...[
+                        TextFormField(
+                          controller: _emailController,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: const InputDecoration(
+                            hintText: 'VIT Email (e.g. name.2023@vitstudent.ac.in)',
+                            prefixIcon: Icon(LucideIcons.mail, color: AppTheme.textSecondary),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 14),
+                        const SizedBox(height: 14),
 
-                      // Password
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          hintText: 'Password',
-                          prefixIcon: Icon(LucideIcons.lock, color: AppTheme.textSecondary),
+                        // Password
+                        TextFormField(
+                          controller: _passwordController,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            hintText: 'Password',
+                            prefixIcon: Icon(LucideIcons.lock, color: AppTheme.textSecondary),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 14),
+                        const SizedBox(height: 14),
+                      ],
 
-                      // Registration fields if Sign Up
-                      if (isSignUp) ...[
+                      // Registration fields if Sign Up OR Anonymous Login
+                      if (isSignUp || isAnonymousLogin) ...[
                         Row(
                           children: [
                             Expanded(
@@ -247,79 +299,6 @@ class _AuthScreenState extends State<AuthScreen> {
                           ],
                         ),
                         const SizedBox(height: 14),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _class10Controller,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  hintText: '10th %',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: TextFormField(
-                                controller: _class12Controller,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  hintText: '12th %',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: TextFormField(
-                                controller: _cgpaController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  hintText: 'CGPA',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: degree,
-                                decoration: const InputDecoration(
-                                  hintText: 'Degree',
-                                ),
-                                dropdownColor: AppTheme.surface,
-                                items: ['B.Tech', 'M.Tech'].map((d) {
-                                  return DropdownMenuItem(value: d, child: Text(d));
-                                }).toList(),
-                                onChanged: (val) {
-                                  if (val != null) setState(() => degree = val);
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: DropdownButtonFormField<int>(
-                                value: arrears,
-                                decoration: const InputDecoration(
-                                  hintText: 'Arrears',
-                                ),
-                                dropdownColor: AppTheme.surface,
-                                items: [0, 1, 2, 3, 4, 5].map((a) {
-                                  return DropdownMenuItem(
-                                    value: a,
-                                    child: Text(a == 0 ? '0 Arrears' : '$a Standing'),
-                                  );
-                                }).toList(),
-                                onChanged: (val) {
-                                  if (val != null) setState(() => arrears = val);
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
                       ],
 
                       // Auth Button
@@ -337,7 +316,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               : Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Text(isSignUp ? 'Create Account' : 'Sign In'),
+                                    Text(isAnonymousLogin ? 'Login Anonymously' : (isSignUp ? 'Create Account' : 'Sign In')),
                                     const SizedBox(width: 8),
                                     const Icon(LucideIcons.arrowRight, size: 18),
                                   ],
@@ -347,18 +326,34 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 16),
 
                       // Toggle Sign In / Sign Up
+                      if (!isAnonymousLogin)
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              isSignUp = !isSignUp;
+                              errorMessage = '';
+                            });
+                          },
+                          child: Text(
+                            isSignUp
+                                ? 'Already have an account? Sign In'
+                                : 'New student? Register your Profile',
+                            style: const TextStyle(color: AppTheme.accent),
+                          ),
+                        ),
+                      
                       TextButton(
                         onPressed: () {
                           setState(() {
-                            isSignUp = !isSignUp;
+                            isAnonymousLogin = !isAnonymousLogin;
                             errorMessage = '';
                           });
                         },
                         child: Text(
-                          isSignUp
-                              ? 'Already have an account? Sign In'
-                              : 'New student? Register your Profile',
-                          style: const TextStyle(color: AppTheme.accent),
+                          isAnonymousLogin
+                              ? 'Sign in with Email instead'
+                              : 'Continue as Anonymous',
+                          style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],

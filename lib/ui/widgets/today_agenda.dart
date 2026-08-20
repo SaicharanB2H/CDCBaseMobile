@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/event_model.dart';
 import '../../data/models/student_model.dart';
@@ -95,8 +95,8 @@ class TodayAgendaWidget extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: shortlisted
-                              ? AppTheme.success.withOpacity(0.2)
-                              : AppTheme.primary.withOpacity(0.15),
+                              ? AppTheme.success.withValues(alpha: 0.2)
+                              : AppTheme.primary.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
