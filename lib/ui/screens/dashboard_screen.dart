@@ -148,7 +148,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return aDone - bDone;
       }
       
-      if (activeFilter == 'LATEST') {
+      if (activeFilter == 'LATEST' || activeFilter == 'SHORTLISTED') {
         final aDate = DateTime.tryParse(a.receivedAt) ?? DateTime.fromMillisecondsSinceEpoch(0);
         final bDate = DateTime.tryParse(b.receivedAt) ?? DateTime.fromMillisecondsSinceEpoch(0);
         return bDate.compareTo(aDate);

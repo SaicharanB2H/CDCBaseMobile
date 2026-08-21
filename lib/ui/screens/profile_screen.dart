@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/network_util.dart';
 import '../../services/auth_service.dart';
 import '../../services/update_service.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../theme/app_theme.dart';
 import '../widgets/linkified_text.dart';
 
@@ -26,6 +27,22 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  String _appVersion = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) {
+      setState(() {
+        _appVersion = info.version;
+      });
+    }
+  }
   void _showEditSheet() {
     if (widget.student == null) return;
 
@@ -575,6 +592,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                     ),
+                  
+                  const SizedBox(height: 24),
+                  if (_appVersion.isNotEmpty)
+                    Text(
+                      'App Version: $_appVersion',
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
+                  const SizedBox(height: 12),
                 ],
               ),
             ),
